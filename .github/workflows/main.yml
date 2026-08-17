@@ -3,7 +3,8 @@ name: Build Streamix BD APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   build:
@@ -22,54 +23,72 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
 
-      - name: Find Android project
-        shell: bash
+      - name: Setup Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Check Android Project
         run: |
-          echo "Searching for Android Gradle project..."
+          echo "Project files:"
+          ls -la
 
-          PROJECT_DIR=$(find . -type f \( \
-            -name "settings.gradle" -o \
-            -name "settings.gradle.kts" \
-          \) -not -path "./.git/*" \
-          -exec dirname {} \; | head -n 1)
+          echo "Checking required files..."
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project not found"
-            echo "Files in repository:"
-            find . -maxdepth 5 -type f | head -200
-            exit 1
+          test -f "settings.gradle.kts" || test -f "settings.gradle"
+          test -d "app"
+
+          echo "Android project found in repository root."
+
+      - name: Prepare Debug Keystore
+        run: |
+          mkdir -p "$HOME/.android"
+
+          keytool -genkeypair \
+            -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Handle Google Services
+        run: |
+          if [ -f "app/google-services.json" ]; then
+            echo "google-services.json found."
+          else
+            echo "google-services.json not found."
+            echo "Continuing without Google Services configuration."
           fi
-
-          echo "Found project: $PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Prepare Gradle
-        run: |
-          cd "$PROJECT_DIR"
-
-          if [ ! -f "./gradlew" ]; then
-            echo "gradlew not found, generating Gradle wrapper..."
-            gradle wrapper --gradle-version 9.3.1
-          fi
-
-          chmod +x ./gradlew
 
       - name: Build Debug APK
         run: |
-          cd "$PROJECT_DIR"
-          ./gradlew clean assembleDebug --no-daemon --stacktrace
+          echo "Gradle version:"
+          gradle --version
+
+          echo "Starting clean build..."
+          gradle clean
+
+          echo "Building Debug APK..."
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Find APK
         run: |
-          find "$PROJECT_DIR" -type f -name "*.apk" -print
+          echo "Searching for APK..."
+          find . -type f -name "*.apk" -print
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Streamix-BD-debug
-          path: |
-            **/build/outputs/apk/debug/*.apk
+          name: Streamix-BD-Debug-APK
+          path: "**/build/outputs/apk/debug/*.apk"
+          if-no-files-found: error
