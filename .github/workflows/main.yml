@@ -3,8 +3,7 @@ name: Build Streamix BD APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   build:
@@ -25,88 +24,52 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
-
-      - name: Install Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Find Android project
+        shell: bash
         run: |
-          echo "Searching Android project..."
-          find . -maxdepth 4 \
-            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
-            -print
+          echo "Searching for Android Gradle project..."
 
-      - name: Detect project folder
-        run: |
-          if [ -f "android-project/settings.gradle.kts" ] || [ -f "android-project/settings.gradle" ]; then
-            echo "PROJECT_DIR=android-project" >> "$GITHUB_ENV"
-          elif [ -f "android-project/Streamix/settings.gradle.kts" ] || [ -f "android-project/Streamix/settings.gradle" ]; then
-            echo "PROJECT_DIR=android-project/Streamix" >> "$GITHUB_ENV"
-          elif [ -f "settings.gradle.kts" ] || [ -f "settings.gradle" ]; then
-            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          else
+          PROJECT_DIR=$(find . -type f \( \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" \
+          \) -not -path "./.git/*" \
+          -exec dirname {} \; | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: Android Gradle project not found"
+            echo "Files in repository:"
+            find . -maxdepth 5 -type f | head -200
             exit 1
           fi
 
-      - name: Prepare debug keystore
+          echo "Found project: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Prepare Gradle
         run: |
-          mkdir -p "$HOME/.android"
+          cd "$PROJECT_DIR"
 
-          keytool -genkeypair \
-            -v \
-            -keystore "$HOME/.android/debug.keystore" \
-            -storepass android \
-            -keypass android \
-            -alias androiddebugkey \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-
-      - name: Disable Google Services if config is missing
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          if [ ! -f "app/google-services.json" ]; then
-            echo "google-services.json not found."
-
-            if [ -f "app/build.gradle.kts" ]; then
-              sed -i '/com.google.gms.google-services/d' app/build.gradle.kts || true
-            fi
-
-            if [ -f "app/build.gradle" ]; then
-              sed -i '/com.google.gms.google-services/d' app/build.gradle || true
-            fi
-          else
-            echo "google-services.json found."
+          if [ ! -f "./gradlew" ]; then
+            echo "gradlew not found, generating Gradle wrapper..."
+            gradle wrapper --gradle-version 9.3.1
           fi
 
-      - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          echo "Using Gradle:"
-          gradle --version
+          chmod +x ./gradlew
 
-          gradle clean
-          gradle assembleDebug --no-daemon --stacktrace
+      - name: Build Debug APK
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew clean assembleDebug --no-daemon --stacktrace
 
       - name: Find APK
         run: |
-          echo "Searching for APK..."
-          find "$GITHUB_WORKSPACE" \
-            -type f \
-            -name "*.apk" \
-            -print
+          find "$PROJECT_DIR" -type f -name "*.apk" -print
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Streamix-BD-Debug-APK
+          name: Streamix-BD-debug
           path: |
             **/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
